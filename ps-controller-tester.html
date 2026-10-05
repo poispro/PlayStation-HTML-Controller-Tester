@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PlayStation Controller + PS Eye Tester</title>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--bd:#2a2f3a;--tx:#e6e8ee;--mu:#8b92a3;--ac:#4f8cff;--ok:#3ecf8e;--er:#ff5d5d}
+@media (prefers-color-scheme:light){:root{--bg:#f4f5f8;--card:#fff;--bd:#d9dce4;--tx:#1b1e26;--mu:#5d6475}}
+*{box-sizing:border-box}
+body{margin:0;font:14px system-ui,sans-serif;background:var(--bg);color:var(--tx);padding:16px}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:0 0 8px}
+h3{font-size:12px;margin:14px 0 6px;color:var(--mu);text-transform:uppercase;letter-spacing:.06em}
+p,.mu{color:var(--mu);margin:4px 0}
+button,select{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:7px 12px;font:inherit;cursor:pointer}
+button.p{background:var(--ac);border-color:var(--ac);color:#fff}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.panel,.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin:12px 0}
+#cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:14px}#cards .card{margin:0}
+.camwrap{display:grid;grid-template-columns:minmax(300px,1.4fr) minmax(260px,1fr);gap:14px}
+@media(max-width:800px){.camwrap{grid-template-columns:1fr}}
+.vw{position:relative;background:#000;border-radius:8px;overflow:hidden;aspect-ratio:4/3}
+.vw canvas{position:absolute;inset:0;width:100%;height:100%;border:0;border-radius:0}
+.hd{display:flex;gap:8px;align-items:center}.hd b{flex:1;font-size:15px}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{--p:0;min-width:34px;text-align:center;padding:5px 8px;border-radius:7px;border:1px solid var(--bd);font-size:12px;background:linear-gradient(to top,var(--ac) calc(var(--p)*100%),transparent 0)}
+.chip.on{border-color:var(--ac);color:#fff;font-weight:600}
+.sticks{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start}
+canvas{background:#000;border:1px solid var(--bd);border-radius:8px;display:block}
+.trig{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px}
+.trig .b{flex:1;height:10px;background:var(--bd);border-radius:5px;overflow:hidden}.trig i{display:block;height:100%;width:0;background:var(--ok)}
+.row{display:flex;align-items:center;gap:8px;margin:6px 0}.row label{width:130px;color:var(--mu);font-size:12px;flex:none}.row input[type=range]{flex:1}
+pre{font:11px/1.45 ui-monospace,monospace;color:var(--mu);margin:4px 0;white-space:pre-wrap;word-break:break-all}
+pre .c{color:var(--er);font-weight:700}
+.er{color:var(--er)}.ok{color:var(--ok)}
+[hidden]{display:none!important}
+#env div{margin:4px 0}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;margin:12px 0}#grid:empty{display:none}
+.tile{background:var(--card);border:1px solid var(--bd);border-radius:12px;overflow:hidden}
+.tile .hd{flex-wrap:wrap;padding:8px 10px}.tile .hd b{min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile .ft{padding:6px 10px}.tile .vid{width:100%;display:block;background:#000;border:0;border-radius:0;aspect-ratio:4/3;object-fit:contain}
+.mv{position:relative;background:#000;transform:scaleX(-1);line-height:0}.mv.off{transform:none}
+.mv .ov{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;border:0;border-radius:0;background:none}
+.st{font:12px ui-monospace,monospace;color:var(--mu)}
+</style>
+</head>
+<body>
+<h1>PlayStation Controller + PS Eye Tester</h1>
+<p>Chrome / Edge only. Controllers use WebHID; PS Eyes use WebUSB (no driver needed, works on Mac) or driver mode. Open this file directly or from localhost, not inside a preview frame.</p>
+<div id="env"></div>
+<div class="panel">
+  <div class="bar">
+    <button class="p" id="add">Add controller(s)</button>
+    <button class="p" id="eyeAdd">Add PS Eye over USB</button>
+    <button id="wcRefresh">Find cameras (driver mode)</button>
+    <label class="mu"><input type="checkbox" id="onlyEye" checked> only likely PS Eyes</label>
+    <label class="mu" id="trkWrap" hidden><input type="checkbox" id="trk" checked> Track PS Move orb</label>
+    <label class="mu">New Eye <select id="res"><option value="640">640×480</option><option value="320">320×240</option></select></label>
+    <label class="mu"><select id="fps"></select> fps</label>
+  </div>
+  <div class="mu" id="status"></div><div class="mu" id="camMsg"></div>
+  <div id="eyeList" class="bar"></div><div id="camList" class="bar"></div>
+  <p class="mu">DualShock 3/4, DualSense, PS Move: tick several in the picker if you like. Close Steam, DS4Windows and similar apps first. Any number of PS Eyes can run at once, each with its own resolution and FPS.</p>
+</div>
+<div id="grid"></div>
+<div id="cards"></div>
+
+<script>
+const BRIDGE_INIT_772X=[[0x88,0xf8],[0x89,0xff],[0x76,0x03],[0x92,0x01],[0x93,0x18],[0x94,0x10],[0x95,0x10],[0xe2,0x00],[0xe7,0x3e],[0x96,0x00],[0x97,0x20],[0x97,0x20],[0x97,0x20],[0x97,0x0a],[0x97,0x3f],[0x97,0x4a],[0x97,0x20],[0x97,0x15],[0x97,0x0b],[0x8e,0x40],[0x1f,0x81],[0x34,0x05],[0xe3,0x04],[0x89,0x00],[0x76,0x00],[0xe7,0x2e],[0x31,0xf9],[0x25,0x42],[0x21,0xf0],[0x1c,0x0a],[0x1d,0x08],[0x1d,0x0e]];
+const SENSOR_INIT_772X=[[0x12,0x80],[0x11,0x01],[0x11,0x01],[0x11,0x01],[0x11,0x01],[0x11,0x01],[0x11,0x01],[0x11,0x01],[0x11,0x01],[0x11,0x01],[0x11,0x01],[0x11,0x01],[0x3d,0x03],[0x17,0x26],[0x18,0xa0],[0x19,0x07],[0x1a,0xf0],[0x32,0x00],[0x29,0xa0],[0x2c,0xf0],[0x65,0x20],[0x11,0x01],[0x42,0x7f],[0x63,0xaa],[0x64,0xff],[0x66,0x00],[0x13,0xf0],[0x0d,0x41],[0x0f,0xc5],[0x14,0x11],[0x22,0x7f],[0x23,0x03],[0x24,0x40],[0x25,0x30],[0x26,0xa1],[0x2a,0x00],[0x2b,0x00],[0x6b,0xaa],[0x13,0xff],[0x90,0x05],[0x91,0x01],[0x92,0x03],[0x93,0x00],[0x94,0x60],[0x95,0x3c],[0x96,0x24],[0x97,0x1e],[0x98,0x62],[0x99,0x80],[0x9a,0x1e],[0x9b,0x08],[0x9c,0x20],[0x9e,0x81],[0xa6,0x07],[0x7e,0x0c],[0x7f,0x16],[0x80,0x2a],[0x81,0x4e],[0x82,0x61],[0x83,0x6f],[0x84,0x7b],[0x85,0x86],[0x86,0x8e],[0x87,0x97],[0x88,0xa4],[0x89,0xaf],[0x8a,0xc5],[0x8b,0xd7],[0x8c,0xe8],[0x8d,0x20],[0x2b,0x00],[0x22,0x7f],[0x23,0x03],[0x11,0x01],[0x64,0xff],[0x0d,0x41],[0x14,0x41],[0x0e,0xcd],[0xac,0xbf],[0x8e,0x00]];
+const BRIDGE_START_VGA_YUYV_772X=[[0x88,0x00],[0x1c,0x00],[0x1d,0x40],[0x1d,0x02],[0x1d,0x00],[0x1d,0x02],[0x1d,0x58],[0x1d,0x00],[0x8d,0x1c],[0x8e,0x80],[0xc0,0x50],[0xc1,0x3c],[0xc2,0x0c],[0xc3,0x69]];
+const SENSOR_START_VGA_YUYV_772X=[[0x12,0x00],[0x17,0x26],[0x18,0xa0],[0x19,0x07],[0x1a,0xf0],[0x29,0xa0],[0x2c,0xf0],[0x65,0x20],[0x67,0x00]];
+const BRIDGE_START_QVGA_YUYV_772X=[[0x88,0x00],[0x1c,0x00],[0x1d,0x40],[0x1d,0x02],[0x1d,0x00],[0x1d,0x01],[0x1d,0x4b],[0x1d,0x00],[0x8d,0x1c],[0x8e,0x80],[0xc0,0x28],[0xc1,0x1e],[0xc2,0x0c],[0xc3,0x69]];
+const SENSOR_START_QVGA_YUYV_772X=[[0x12,0x40],[0x17,0x3f],[0x18,0x50],[0x19,0x03],[0x1a,0x78],[0x29,0x50],[0x2c,0x78],[0x65,0x2f],[0x67,0x00]];
+const $=id=>document.getElementById(id);
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const SONY=0x054c;
+const MODELS={0x0268:['DualShock 3','ds3'],0x05c4:['DualShock 4 (v1)','ds4'],0x09cc:['DualShock 4 (v2)','ds4'],0x0ba0:['DualShock 4 USB adapter','ds4'],
+  0x0ce6:['DualSense','ds5'],0x0df2:['DualSense Edge','ds5'],0x03d5:['PS Move (ZCM1)','move'],0x0c5e:['PS Move (ZCM2)','move']};
+const LBL={up:'↑',down:'↓',left:'←',right:'→',cross:'✕',circle:'○',square:'□',triangle:'△',l1:'L1',r1:'R1',l2:'L2',r2:'R2',l3:'L3',r3:'R3',share:'Share',create:'Create',options:'Options',select:'Select',start:'Start',ps:'PS',tp:'Touchpad click',tpl:'Pad left',tpm:'Pad middle',tpr:'Pad right',mute:'Mute',move:'Move',t:'Trigger'};
+const KEYS={
+ ds3:['up','down','left','right','cross','circle','square','triangle','l1','r1','l2','r2','l3','r3','select','start','ps'],
+ ds4:['up','down','left','right','cross','circle','square','triangle','l1','r1','l2','r2','l3','r3','share','options','ps','tp','tpl','tpm','tpr'],
+ ds5:['up','down','left','right','cross','circle','square','triangle','l1','r1','l2','r2','l3','r3','create','options','ps','tp','tpl','tpm','tpr','mute'],
+ move:['triangle','circle','cross','square','select','start','ps','move','t']};
+
+// ================= helpers =================
+function crc32(a){let c=~0;for(const b of a){c^=b;for(let k=0;k<8;k++)c=c&1?(c>>>1)^0xEDB88320:c>>>1;}return ~c>>>0;}
+function rsize(dev,id,kind){for(const col of dev.collections)for(const r of col[kind]||[])if(r.reportId===id){let bits=0;for(const it of r.items)bits+=it.reportSize*it.reportCount;return Math.ceil(bits/8);}return 0;}
+const fit=(a,n)=>{if(!n||n===a.length)return a;const o=new Uint8Array(n);o.set(a.subarray(0,Math.min(n,a.length)));return o;};
+const hat=h=>({up:h===7||h===0||h===1,right:h>=1&&h<=3,down:h>=3&&h<=5,left:h>=5&&h<=7});
+const stk=(a,b)=>[(a-128)/127.5,(b-128)/127.5];
+const hsvRgb=(h)=>{const f=n=>{const k=(n+h*6)%6;return Math.round(255*(1-Math.max(0,Math.min(k,4-k,1))));};return[f(5),f(3),f(1)];};
+const hex2rgb=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));
+const rgb2hex=a=>'#'+a.map(v=>v.toString(16).padStart(2,'0')).join('');
+function rgb2h(r,g,b){const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;let h=0;if(d){if(mx===r)h=((g-b)/d+6)%6;else if(mx===g)h=(b-r)/d+2;else h=(r-g)/d+4;h/=6;}return[h,mx?d/mx:0,mx/255];}
+
+// ================= input parsers (data excludes report ID) =================
+function pDS4(id,d){
+  const o=id===0x11?2:0; if(d.byteLength<o+9)return null;
+  const u=i=>d.getUint8(o+i),s=i=>d.getInt16(o+i,true),a=u(4),b=u(5),c=u(6);
+  const r={b:{...hat(a&15),square:a&16,cross:a&32,circle:a&64,triangle:a&128,l1:b&1,r1:b&2,l2:b&4,r2:b&8,share:b&16,options:b&32,l3:b&64,r3:b&128,ps:c&1,tp:c&2},
+    s:[stk(u(0),u(1)),stk(u(2),u(3))],t:[u(7),u(8)],touch:[],pad:[1920,942],txt:''};
+  if(d.byteLength>=o+42){
+    r.txt='gyro  '+[12,14,16].map(i=>s(i)).join('  ')+'\naccel '+[18,20,22].map(i=>s(i)).join('  ');
+    const k=Math.max(0,Math.min(u(32),3)-1),base=34+9*k;
+    for(let i=0;i<2;i++){const q=base+i*4,cc=u(q);r.touch.push({id:cc&127,on:!(cc&128),x:u(q+1)|((u(q+2)&15)<<8),y:(u(q+2)>>4)|(u(q+3)<<4)});}
+    const st=u(29),lv=st&15,usb=st&16;r.batt=(usb?'USB, ':'battery, ')+Math.round(Math.min(lv,usb?10:8)/(usb?10:8)*100)+'%';
+  }
+  return r;
+}
+function pDS5(id,d){
+  const o=id===0x31?1:0; if(d.byteLength<o+10)return null;
+  const u=i=>d.getUint8(o+i),s=i=>d.getInt16(o+i,true),a=u(7),b=u(8),c=u(9);
+  const r={b:{...hat(a&15),square:a&16,cross:a&32,circle:a&64,triangle:a&128,l1:b&1,r1:b&2,l2:b&4,r2:b&8,create:b&16,options:b&32,l3:b&64,r3:b&128,ps:c&1,tp:c&2,mute:c&4},
+    s:[stk(u(0),u(1)),stk(u(2),u(3))],t:[u(4),u(5)],touch:[],pad:[1920,1080],txt:''};
+  if(d.byteLength>=o+40){
+    r.txt='gyro  '+[15,17,19].map(i=>s(i)).join('  ')+'\naccel '+[21,23,25].map(i=>s(i)).join('  ');
+    for(let i=0;i<2;i++){const q=32+i*4,cc=u(q);r.touch.push({id:cc&127,on:!(cc&128),x:u(q+1)|((u(q+2)&15)<<8),y:(u(q+2)>>4)|(u(q+3)<<4)});}
+  }
+  if(d.byteLength>o+52){const v=u(52),st=v>>4;r.batt=(['discharging','charging','full'][st]||('status '+st))+', '+Math.min(100,((v&15)*10+5))+'%';}
+  return r;
+}
+function pDS3(id,d){
+  if(id!==1||d.byteLength<26)return null;
+  const u=i=>d.getUint8(i),a=u(1),b=u(2);
+  const r={b:{select:a&1,l3:a&2,r3:a&4,start:a&8,up:a&16,right:a&32,down:a&64,left:a&128,l2:b&1,r2:b&2,l1:b&4,r1:b&8,triangle:b&16,circle:b&32,cross:b&64,square:b&128,ps:u(3)&1},
+    s:[stk(u(5),u(6)),stk(u(7),u(8))],t:[u(17),u(18)],touch:[],
+    p:{up:u(13),right:u(14),down:u(15),left:u(16),l2:u(17),r2:u(18),l1:u(19),r1:u(20),triangle:u(21),circle:u(22),cross:u(23),square:u(24)},txt:''};
+  if(d.byteLength>=48)r.txt='accel '+[40,42,44].map(i=>d.getUint16(i,false)).join('  ')+'\ngyro  '+d.getUint16(46,false);
+  if(d.byteLength>29){const bt=u(29);r.batt=bt===0xee?'charging (USB)':'level '+bt+'/5';}
+  return r;
+}
+function pMove(id,d){
+  if(d.byteLength<30)return null;
+  const u=i=>d.getUint8(i),a=u(0),b=u(1),c=u(2),e=u(3),w=i=>d.getUint16(i,true)-32768;
+  return {b:{select:a&1,start:a&8,triangle:b&16,circle:b&32,cross:b&64,square:b&128,ps:c&1,move:e&0x40,t:e&0x80},s:[],t:[u(4)],touch:[],
+    p:{t:u(4)},txt:'accel '+[12,14,16].map(w).join('  ')+'\ngyro  '+[24,26,28].map(w).join('  '),
+    batt:u(11)===0xee?'charging (USB)':'level '+u(11)+'/5'};
+}
+const PARSE={ds3:pDS3,ds4:pDS4,ds5:pDS5,move:pMove};
+
+// ================= output report builders =================
+function build(c){
+  const o=c.o,t=c.type;
+  if(t==='ds4'){
+    if(c.bt){const a=new Uint8Array(78);a[0]=0x11;a[1]=0xC0;a[3]=7;a[6]=o.weak;a[7]=o.strong;a.set(o.rgb,8);a[11]=o.on;a[12]=o.off;
+      new DataView(a.buffer).setUint32(74,crc32([0xA2,...a.subarray(0,74)]),true);return[0x11,a.slice(1)];}
+    const d=new Uint8Array(31);d[0]=7;d[3]=o.weak;d[4]=o.strong;d.set(o.rgb,5);d[8]=o.on;d[9]=o.off;
+    return[5,fit(d,rsize(c.dev,5,'outputReports'))];
+  }
+  if(t==='ds5'){
+    const d=new Uint8Array(47);
+    d[0]=3|(o.trR?4:0)|(o.trL?8:0);d[1]=0x04|0x10|1;d[2]=o.weak;d[3]=o.strong;d[8]=o.mic?1:0;
+    if(o.trR){d[10]=1;d[11]=0x40;d[12]=o.trR;} if(o.trL){d[21]=1;d[22]=0x40;d[23]=o.trL;}
+    if(!c.setup){d[38]=2;d[41]=2;c.setup=true;}
+    d[43]=o.leds;d.set(o.rgb,44);
+    if(c.bt){const a=new Uint8Array(78);a[0]=0x31;a[1]=(c.seq++&15)<<4;a[2]=0x10;a.set(d,3);
+      new DataView(a.buffer).setUint32(74,crc32([0xA2,...a.subarray(0,74)]),true);return[0x31,a.slice(1)];}
+    return[2,fit(d,rsize(c.dev,2,'outputReports'))];
+  }
+  if(t==='ds3'){
+    const d=new Uint8Array(47);d[1]=0xfe;d[2]=o.weak?1:0;d[3]=0xfe;d[4]=o.strong;d[9]=(o.leds&15)<<1;
+    for(const k of[10,15,20,25])d.set([0xff,0x27,0x10,0x00,0x32],k);
+    return[1,fit(d,rsize(c.dev,1,'outputReports'))];
+  }
+  const d=new Uint8Array(48);d.set(o.rgb,1);d[5]=o.strong;return[6,fit(d,rsize(c.dev,6,'outputReports'))];
+}
+async function sendOut(c){
+  try{const[id,d]=build(c);await c.dev.sendReport(id,d);c.msg.textContent='';}
+  catch(e){c.msg.innerHTML='<span class="er">Output failed: '+e.message+'</span>';}
+}
+function queue(c){c.dirty=true;if(c.busy)return;c.busy=true;setTimeout(()=>{c.busy=false;sendOut(c);},25);}
+
+// ================= controller cards =================
+const cards=new Map();
+function ctl(parent,label,el){const r=document.createElement('div');r.className='row';r.innerHTML='<label>'+label+'</label>';r.appendChild(el);parent.appendChild(r);return r;}
+const slider=(fn,max=255)=>{const e=document.createElement('input');e.type='range';e.min=0;e.max=max;e.value=0;e.oninput=()=>fn(+e.value);return e;};
+const descr=dev=>dev.collections.map(c=>'usage '+c.usagePage.toString(16)+':'+c.usage.toString(16)+
+  ' in['+(c.inputReports||[]).map(r=>r.reportId).join(',')+'] out['+(c.outputReports||[]).map(r=>r.reportId+'='+rsize(dev,r.reportId,'outputReports')).join(',')+'] feat['+(c.featureReports||[]).map(r=>r.reportId).join(',')+']').join(' | ');
+
+function buildCard(c){
+  const el=document.createElement('div');el.className='card';c.el=el;
+  const keys=KEYS[c.type];
+  el.innerHTML='<div class="hd"><b></b><span class="mu batt"></span><button class="x">Disconnect</button></div><div class="msg mu"></div>'+
+   '<h3>Buttons</h3><div class="chips"></div>'+
+   (c.type!=='move'?'<h3>Sticks</h3><div class="sticks"><canvas width="110" height="110"></canvas><canvas width="110" height="110"></canvas><pre class="vals"></pre></div>':'')+
+   '<h3>'+(c.type==='move'?'Trigger':'Triggers')+'</h3><div class="trigs"></div>'+
+   (c.type==='ds4'||c.type==='ds5'?'<h3>Touchpad <button class="clr">clear trail</button></h3><canvas class="tp" width="480" height="'+Math.round(480*(c.type==='ds4'?942:1080)/1920)+'" style="width:100%"></canvas><p class="mu">The pad has one physical click. Left / middle / right is worked out from where your finger is when you press.</p>':'')+
+   '<h3>Motion sensors</h3><pre class="mot">—</pre>'+
+   '<h3>Outputs</h3><div class="out"></div>'+
+   '<h3>Diagnostics</h3><pre class="diag"></pre><div class="bar"><button class="re">Re-run init</button></div>'+
+   '<details><summary class="mu">Raw input report</summary><pre class="raw"></pre></details>';
+  el.querySelector('b').textContent=c.name+' · '+(c.dev.productName||'')+' · '+c.dev.productId.toString(16).padStart(4,'0');
+  c.msg=el.querySelector('.msg');c.batt=el.querySelector('.batt');c.diag=el.querySelector('.diag');
+  c.chips={};const cc=el.querySelector('.chips');
+  for(const k of keys){const s=document.createElement('span');s.className='chip';s.textContent=LBL[k];cc.appendChild(s);c.chips[k]=s;}
+  const tn=c.type==='move'?['Trigger']:['L2','R2'];
+  c.bars=tn.map(n=>{const d=document.createElement('div');d.className='trig';d.innerHTML='<span style="width:24px">'+n+'</span><div class="b"><i></i></div><span class="n" style="width:28px;text-align:right">0</span>';el.querySelector('.trigs').appendChild(d);return d;});
+  c.cv=[...el.querySelectorAll('.sticks canvas')];c.vals=el.querySelector('.vals');c.tp=el.querySelector('canvas.tp');c.mot=el.querySelector('.mot');c.rawEl=el.querySelector('.raw');
+  if(c.tp){c.tpx=c.tp.getContext('2d');c.tpx.font='12px sans-serif';el.querySelector('.clr').onclick=()=>{c.tpx.fillStyle='#000';c.tpx.fillRect(0,0,c.tp.width,c.tp.height);};}
+  const out=el.querySelector('.out'),o=c.o,q=()=>queue(c);
+  if(c.type==='move'){
+    ctl(out,'Rumble',slider(v=>{o.strong=v;q();}));
+  }else{
+    ctl(out,c.type==='ds3'?'Left (big) motor':'Left / strong motor',slider(v=>{o.strong=v;q();}));
+    ctl(out,c.type==='ds3'?'Right (small, on/off)':'Right / weak motor',slider(v=>{o.weak=v;q();}));
+  }
+  if(c.type!=='ds3'){
+    const col=document.createElement('input');col.type='color';col.value='#0000ff';c.col=col;
+    col.oninput=()=>{o.rgb=hex2rgb(col.value);q();};
+    ctl(out,c.type==='move'?'Orb colour':'Light colour',col);
+    const cy=document.createElement('button');cy.textContent='Cycle colours';let tm=null,h=0;
+    cy.onclick=()=>{if(tm){clearInterval(tm);tm=null;cy.textContent='Cycle colours';return;}cy.textContent='Stop cycling';tm=setInterval(()=>{h=(h+0.01)%1;o.rgb=hsvRgb(h);col.value=rgb2hex(o.rgb);q();},60);};
+    c.stopCycle=()=>tm&&clearInterval(tm);
+    ctl(out,'Light test',cy);
+  }
+  if(c.type==='ds4'){ctl(out,'Flash on (×10ms)',slider(v=>{o.on=v;q();}));ctl(out,'Flash off (×10ms)',slider(v=>{o.off=v;q();}));}
+  if(c.type==='ds5'||c.type==='ds3'){
+    const n=c.type==='ds3'?4:5,w=document.createElement('div');w.className='chips';
+    for(let i=0;i<n;i++){const l=document.createElement('label');l.innerHTML='<input type="checkbox"> '+(i+1);l.firstChild.onchange=e=>{o.leds=e.target.checked?o.leds|1<<i:o.leds&~(1<<i);q();};w.appendChild(l);}
+    ctl(out,c.type==='ds3'?'LEDs 1–4':'Player LEDs',w);
+  }
+  if(c.type==='ds5'){
+    const m=document.createElement('input');m.type='checkbox';m.onchange=()=>{o.mic=m.checked?1:0;q();};ctl(out,'Mic LED',m);
+    ctl(out,'L2 trigger resistance',slider(v=>{o.trL=v;q();}));ctl(out,'R2 trigger resistance',slider(v=>{o.trR=v;q();}));
+  }
+  const off=document.createElement('button');off.textContent='All outputs off';
+  off.onclick=()=>{c.stopCycle&&c.stopCycle();Object.assign(o,{weak:0,strong:0,rgb:[0,0,0],on:0,off:0,leds:0,mic:0,trL:0,trR:0});out.querySelectorAll('input[type=range]').forEach(r=>r.value=0);out.querySelectorAll('input[type=checkbox]').forEach(r=>r.checked=false);queue(c);};
+  ctl(out,'',off);
+  el.querySelector('.x').onclick=()=>drop(c,true);
+  el.querySelector('.re').onclick=()=>initDev(c);
+  $('cards').appendChild(el);
+}
+
+async function initDev(c){
+  const log=[],d=c.dev;
+  try{
+    if(c.type==='ds3'){
+      await d.receiveFeatureReport(0xF2).then(()=>log.push('F2 read ok'),e=>log.push('F2 read: '+e.message));
+      for(const m of[0x03,0x0c]){let ok=0,er='';
+        for(const n of new Set([rsize(d,0xF4,'featureReports')||4,4,5])){try{await d.sendFeatureReport(0xF4,fit(Uint8Array.of(0x42,m,0,0),n));ok=n;break;}catch(e){er=e.message;}}
+        log.push('F4 enable(0x'+m.toString(16)+') '+(ok?'ok':er));await sleep(150);
+      }
+      if(!c.o.leds){c.o.leds=1;const k=c.el.querySelector('.out .chips input');if(k)k.checked=true;}
+      sendOut(c);
+    }
+    if(c.type==='ds4')await d.receiveFeatureReport(0x02).then(()=>log.push('feature 02 read ok'),e=>log.push('feature 02: '+e.message));
+    if(c.type==='ds5')await d.receiveFeatureReport(0x05).then(()=>log.push('feature 05 read ok'),e=>log.push('feature 05: '+e.message));
+  }catch(e){log.push(e.message);}
+  c.initLog=log.join('; ');
+}
+async function drop(c,close){
+  clearInterval(c.keep);c.stopCycle&&c.stopCycle();
+  if(close&&c.dirty){Object.assign(c.o,{weak:0,strong:0,rgb:[0,0,0],on:0,off:0,leds:0,mic:0,trL:0,trR:0});try{await sendOut(c);}catch(e){}}
+  try{c.dev.removeEventListener('inputreport',c.fn);if(close)await c.dev.close();}catch(e){}
+  c.el.remove();cards.delete(c.dev);updateGate();
+}
+function onReport(c,e){
+  let id=e.reportId,dv=e.data;
+  const bytes=new Uint8Array(dv.buffer,dv.byteOffset,dv.byteLength);
+  if(c.type==='ds3'||c.type==='move'){ // some stacks leave the report ID inside the data: strip it by length
+    if((id===0&&bytes[0]===1)||(id===1&&bytes.length===49&&bytes[0]===1)){id=1;dv=new DataView(dv.buffer,dv.byteOffset+1,dv.byteLength-1);}
+  }
+  if(id===0x11||id===0x31)c.bt=true;
+  c.count++;c.lastId=e.reportId;c.lastLen=bytes.length;
+  const r=PARSE[c.type](id,dv);
+  if(r){
+    c.cur=r;
+    if(r.touch.length){const a=r.touch.find(t=>t.on);if(a)c.lastX=a.x/r.pad[0];
+      const z=c.lastX===undefined?-1:Math.min(2,Math.floor(c.lastX*3));
+      r.b.tpl=r.b.tp&&z===0;r.b.tpm=r.b.tp&&z===1;r.b.tpr=r.b.tp&&z===2;}
+    if(c.type==='move')c.moveT=r.t[0];
+  }
+  c.prev=c.last;c.last={id:e.reportId,b:bytes.slice()};
+}
+async function add(dev){
+  if(dev.vendorId!==SONY||cards.has(dev))return;
+  const m=MODELS[dev.productId];if(!m)return;
+  try{if(!dev.opened)await dev.open();}
+  catch(e){$('status').innerHTML='<span class="er">Could not open '+m[0]+': '+e.message+' (close other apps using it)</span>';return;}
+  const c={dev,name:m[0],type:m[1],o:{weak:0,strong:0,rgb:[0,0,255],on:0,off:0,leds:0,mic:0,trL:0,trR:0},cur:null,last:null,prev:null,seq:0,bt:false,dirty:false,count:0,t0:performance.now(),initLog:''};
+  buildCard(c);cards.set(dev,c);updateGate();
+  c.fn=e=>onReport(c,e);dev.addEventListener('inputreport',c.fn);
+  await initDev(c);
+  if(c.type==='move'){c.o.rgb=[190,0,190];if(c.col)c.col.value='#be00be';queue(c);}
+  let tries=0;c.retry=setInterval(()=>{if(c.count||!cards.has(dev)||++tries>10){clearInterval(c.retry);return;}initDev(c);},1200); // keep re-enabling until data flows
+  c.keep=setInterval(()=>{if(c.dirty)sendOut(c);},1500);
+}
+
+// ================= render loop =================
+function stickDraw(cv,x,y,on){const g=cv.getContext('2d'),w=cv.width,r=w/2-6;g.fillStyle='#000';g.fillRect(0,0,w,w);
+  g.strokeStyle='#3a4150';g.beginPath();g.arc(w/2,w/2,r,0,7);g.moveTo(w/2,6);g.lineTo(w/2,w-6);g.moveTo(6,w/2);g.lineTo(w-6,w/2);g.stroke();
+  g.fillStyle=on?'#3ecf8e':'#4f8cff';g.beginPath();g.arc(w/2+x*r,w/2+y*r,7,0,7);g.fill();}
+let lastDiag=0;
+function frame(now){
+  const slow=now-lastDiag>300;if(slow)lastDiag=now;
+  for(const c of cards.values()){try{
+    if(slow){
+      const secs=(now-c.t0)/1000;
+      let t='input reports: '+c.count+(c.count?' · last id 0x'+c.lastId.toString(16)+', '+c.lastLen+' bytes':' · NONE YET')+'\nreports: '+descr(c.dev)+'\ninit: '+(c.initLog||'…');
+      if(c.count&&!c.cur){t+='\nReports arrive but their layout is not recognised (see Raw input report below).';c.el.querySelector('details').open=true;}
+      if(!c.count&&secs>2)t+='\nNo input data is arriving. Press buttons. '+(c.type==='ds3'?'The DS3 must be on USB and the PS button pressed once.':c.type==='move'?'The PS Move sends no buttons or trigger over USB (lights and rumble still work). Pair it over Bluetooth to test them.':'Check the cable and that no other app has the controller.');
+      c.diag.textContent=t;
+    }
+    const r=c.cur;if(!r)continue;
+    for(const k in c.chips){const on=!!r.b[k],p=r.p&&r.p[k]!==undefined?r.p[k]/255:(on?1:0);c.chips[k].classList.toggle('on',on||p>0.05);c.chips[k].style.setProperty('--p',p.toFixed(2));}
+    if(r.t)r.t.forEach((v,i)=>{const b=c.bars[i];if(b){b.querySelector('i').style.width=(v/2.55)+'%';b.querySelector('.n').textContent=v;}});
+    if(r.s.length){stickDraw(c.cv[0],r.s[0][0],r.s[0][1],r.b.l3);stickDraw(c.cv[1],r.s[1][0],r.s[1][1],r.b.r3);
+      c.vals.textContent='L  '+r.s[0].map(v=>v.toFixed(2)).join(', ')+'\nR  '+r.s[1].map(v=>v.toFixed(2)).join(', ');}
+    if(c.tp){const g=c.tpx,W=c.tp.width,H=c.tp.height;g.fillStyle='rgba(0,0,0,.08)';g.fillRect(0,0,W,H);
+      g.strokeStyle=r.b.tp?'#3ecf8e':'#2a2f3a';g.lineWidth=4;g.strokeRect(0,0,W,H);
+      g.lineWidth=1;g.strokeStyle='#2a2f3a';g.beginPath();g.moveTo(W/3,0);g.lineTo(W/3,H);g.moveTo(2*W/3,0);g.lineTo(2*W/3,H);g.stroke();
+      r.touch.forEach((t,i)=>{if(!t.on)return;const x=t.x/r.pad[0]*W,y=t.y/r.pad[1]*H;g.fillStyle=i?'#ffb84f':'#4f8cff';g.beginPath();g.arc(x,y,9,0,7);g.fill();g.fillStyle='#fff';g.fillText((i+1)+' ('+t.x+','+t.y+')',x+12,y);});}
+    c.mot.textContent=r.txt||'—';c.batt.textContent=r.batt||'';
+    if(c.last&&c.el.querySelector('details').open&&slow){const L=c.last,P=c.prev&&c.prev.id===L.id?c.prev.b:null;
+      c.rawEl.innerHTML='id 0x'+L.id.toString(16)+' ('+L.b.length+' bytes)\n'+[...L.b.slice(0,96)].map((v,i)=>{const s=v.toString(16).padStart(2,'0');return P&&P[i]!==v?'<span class="c">'+s+'</span>':s;}).join(' ');}
+  }catch(e){fail(e);}}
+  try{camFrame();}catch(e){fail(e);}
+  requestAnimationFrame(frame);
+}
+
+// ================= cameras: any number of PS Eyes (WebUSB) + driver-mode cameras =================
+const RATES={640:[83,75,60,50,40,30,25,20,15,10],320:[290,205,187,150,137,125,100,90,75,60,50,40,37,30,17,15,10]};
+function fillFps(R,F){const w=R.value,keep=+F.value,L=RATES[w];
+  F.innerHTML=L.map(f=>'<option value="'+f+'">'+f+([83,205,290].includes(f)?' (may glitch)':'')+'</option>').join('');F.value=L.includes(keep)?keep:(w==='640'?60:187);}
+$('res').onchange=()=>fillFps($('res'),$('fps'));fillFps($('res'),$('fps'));
+class Eye{
+  constructor(dev){this.dev=dev;this.run=false;}
+  async w(reg,val){await this.dev.controlTransferOut({requestType:'vendor',recipient:'device',request:1,value:0,index:reg},Uint8Array.of(val));}
+  async r(reg){const x=await this.dev.controlTransferIn({requestType:'vendor',recipient:'device',request:1,value:0,index:reg},1);return x.data.getUint8(0);}
+  async chk(){for(let i=0;i<5;i++){await sleep(15);const d=await this.r(0xf6);if(d===0)return true;if(d===4)return false;}return false;}
+  async sw(reg,val){await this.w(0xf2,reg);await this.w(0xf3,val);await this.w(0xf5,0x37);if(!await this.chk())throw new Error('SCCB write failed (reg 0x'+reg.toString(16)+')');}
+  async sr(reg){await this.w(0xf2,reg);await this.w(0xf5,0x33);await this.chk();await this.w(0xf5,0xf9);await this.chk();return this.r(0xf4);}
+  async bw(t){for(const [a,b] of t)await this.w(a,b);}
+  async swa(t){for(const [a,b] of t){if(a!==0xff)await this.sw(a,b);else{await this.sr(b);await this.sw(0xff,0);}}}
+  async led(on){let d=await this.r(0x21);await this.w(0x21,d|0x80);d=await this.r(0x23);await this.w(0x23,on?d|0x80:d&~0x80);if(!on){d=await this.r(0x21);await this.w(0x21,d&~0x80);}}
+  async open(){
+    const d=this.dev; await d.open(); if(!d.configuration)await d.selectConfiguration(1);
+    await d.claimInterface(0);
+    for(const a of d.configuration.interfaces[0].alternates)for(const e of a.endpoints)if(e.type==='bulk'&&e.direction==='in')this.ep=e.endpointNumber;
+    if(!this.ep)throw new Error('No bulk IN endpoint found');
+    await this.w(0xe7,0x3a);await this.w(0xe0,0x08);await sleep(100);
+    await this.w(0xf1,0x42);await this.sw(0x12,0x80);await sleep(15);
+    await this.sr(0x0a);let id=(await this.sr(0x0a))<<8;await this.sr(0x0b);id|=await this.sr(0x0b);
+    if((id&0xfff0)===0x7670)throw new Error('OV767x sensor (not a PS3 Eye)');
+    this.sid=id;
+    await this.bw(BRIDGE_INIT_772X);await this.led(1);await this.swa(SENSOR_INIT_772X);
+    await this.w(0xe0,0x09);
+  }
+  async start(w,fps){
+    const vga=w===640; this.w_=vga?640:320; this.h_=vga?480:240;
+    await this.bw(vga?BRIDGE_START_VGA_YUYV_772X:BRIDGE_START_QVGA_YUYV_772X);
+    await this.swa(vga?SENSOR_START_VGA_YUYV_772X:SENSOR_START_QVGA_YUYV_772X);
+    const rates=vga?[[83,1,0xc1,2],[75,1,0x81,2],[60,0,0x41,4],[50,1,0x41,2],[40,2,0xc1,4],[30,4,0x81,2],[25,0,0x01,2],[20,4,0x41,2],[15,9,0x81,2],[10,9,0x41,2]]
+      :[[290,0,0xc1,4],[205,1,0xc1,2],[187,1,0x81,2],[150,0,0x41,4],[137,2,0xc1,2],[125,1,0x41,2],[100,2,0xc1,4],[90,3,0x81,2],[75,4,0x81,2],[60,4,0xc1,4],[50,4,0x41,2],[40,6,0x81,3],[37,0,0x01,4],[30,4,0x41,4],[17,0x18,0xc1,2],[15,0x18,0x81,2],[10,0x18,0x41,2]];
+    const m=rates.find(x=>fps>=x[0])||rates[rates.length-1];
+    await this.sw(0x11,m[1]);await this.sw(0x0d,m[2]);await this.w(0xe5,m[3]);this.fps=m[0];
+    // default controls from the Linux driver
+    await this.sw(0xa7,64);await this.sw(0xa8,64);
+    await this.sw(0x13,(await this.sr(0x13))|0x04);await this.sw(0x64,(await this.sr(0x64))|3);
+    await this.sw(0x13,(await this.sr(0x13))|0x02);await this.sw(0x63,(await this.sr(0x63))|0xc0);
+    await this.sw(0x13,(await this.sr(0x13))|0x01);
+    await this.sw(0x08,120>>7);await this.sw(0x10,(120<<1)&255);
+    await this.sw(0x9b,0);await this.sw(0x9c,32);
+    await this.sw(0x0c,((await this.sr(0x0c))&~0xc0)|0xc0);await this.sw(0x2b,0);
+    await this.led(1);await this.w(0xe0,0x00);
+  }
+  async stop(){
+    this.run=false; await sleep(50);
+    try{await this.w(0xe0,0x09);await this.led(0);await this.dev.releaseInterface(0);await this.dev.close();}catch(e){}
+  }
+}
+Object.assign(Eye.prototype,{
+  lock(fn){const p=(this.chain||Promise.resolve()).then(fn);this.chain=p.catch(()=>{});return p;},
+  setManual(manual,exp,gain){return this.lock(async()=>{
+    const r13=await this.sr(0x13);
+    if(manual){await this.sw(0x13,r13&~0x07);let g=gain&0x0f;const k=gain&0x30;g|=k===0x10?0x30:k===0x20?0x70:k===0x30?0xf0:0;
+      await this.sw(0x00,g);await this.sw(0x08,exp>>7);await this.sw(0x10,(exp<<1)&255);
+      await this.sw(0x63,(await this.sr(0x63))&~0xc0);await this.sw(0x64,(await this.sr(0x64))&~0x03);
+    }else{await this.sw(0x13,r13|0x07);await this.sw(0x63,(await this.sr(0x63))|0xc0);await this.sw(0x64,(await this.sr(0x64))|0x03);}});}
+});
+function yuyv2rgba(s,d,n){for(let i=0,j=0,e=n*4;i<e;i+=4,j+=8){const y0=s[i],u=s[i+1]-128,y1=s[i+2],v=s[i+3]-128,r=(359*v)>>8,g=(88*u+183*v)>>8,b=(454*u)>>8;
+  d[j]=y0+r;d[j+1]=y0-g;d[j+2]=y0+b;d[j+3]=255;d[j+4]=y1+r;d[j+5]=y1-g;d[j+6]=y1+b;d[j+7]=255;}}
+const srcs=new Set();let nId=0,nEye=0;
+const isEyeDev=d=>d.vendorId===0x1415&&d.productId===0x2000;
+const looksEye=d=>/ps3|eye|ov534|ov7725|usb camera|sony|playstation|1415/i.test(d.label);
+const say=(h,err)=>{$('camMsg').innerHTML=err?'<span class="er">'+h+'</span>':h;};
+const hint=e=>(e.message||String(e))+(/claim|access denied|busy|in use/i.test(e.message||'')?' — another driver or app owns this camera. On Windows install WinUSB (Zadig) or use driver mode; on Linux use driver mode.':'');
+function mkTile(title,media,usb){
+  const t=document.createElement('div');t.className='tile';
+  t.innerHTML='<div class="hd"><b></b><select class="r"><option value="640">640×480</option><option value="320">320×240</option></select><select class="f"></select><button data-a="mir">Mirror</button><button data-a="snap">Snapshot</button><button data-a="stop">Stop</button></div>'+media+'<div class="ft"><span class="st">starting…</span></div>'+
+  (usb?'<details class="ft"><summary class="mu">Exposure, gain, LED</summary><div class="row"><label>Manual exposure</label><input type="checkbox" class="man"></div><div class="row"><label>Exposure</label><input type="range" class="exp" min="0" max="255" value="40"></div><div class="row"><label>Gain</label><input type="range" class="gain" min="0" max="63" value="0"></div><div class="row"><label>Which camera?</label><button class="blink">Blink LED</button></div></details>':'');
+  t.querySelector('b').textContent=title;return t;}
+function wire(s,w,f){
+  const t=s.tile,R=t.querySelector('.r'),F=t.querySelector('.f'),st=t.querySelector('.st');
+  R.value=String(w);fillFps(R,F);if(RATES[w].includes(f))F.value=f;
+  const go=async()=>{try{await s.restart(+R.value,+F.value);}catch(e){s.running=false;s.err=hint(e);updateGate();}};
+  R.onchange=()=>{fillFps(R,F);go();};F.onchange=go;
+  t.onclick=e=>{const a=e.target.dataset.a;if(!a)return;
+    if(a==='mir')t.querySelector('.mv').classList.toggle('off');
+    if(a==='stop')s.stop();
+    if(a==='snap'){const c=document.createElement('canvas');c.width=s.W;c.height=s.H;c.getContext('2d').drawImage(s.el,0,0);const l=document.createElement('a');l.download='ps-eye-'+Date.now()+'.png';l.href=c.toDataURL();l.click();}};
+  let last=performance.now();
+  s.timer=setInterval(()=>{const n=performance.now(),dt=(n-last)/1000,fps=s.frames/dt,sh=s.shown/dt;s.frames=0;s.shown=0;last=n;
+    if(s.err){st.innerHTML='<span class="er">'+s.err+'</span>';return;}
+    st.innerHTML='<span class="'+(s.running?'ok':'er')+'">●</span> '+(s.W||'?')+'×'+(s.H||'?')+' · '+fps.toFixed(1)+' fps'+(s.target?' (target '+s.target+')':'')+(s.kind==='usb'?' · drawn '+sh.toFixed(0)+'/s':'')+(s.tracking?(s.orb&&s.dist?' · orb ≈ '+Math.round(s.dist)+' cm':(s.lock?' · orb not found':' · locating orb…')):'')+(s.running&&!fps&&n-s.t0>3000?' — no frames yet: try another USB port or 320×240':'');},1000);
+}
+async function boot(s,w,f){
+  s.stop=async()=>{clearInterval(s.timer);await s.end();srcs.delete(s);s.tile.remove();updateGate();usbList();};
+  s.restart=async(w,f)=>{s.err='';await s.end();await sleep(250);await s.begin(w,f);};
+  srcs.add(s);$('grid').appendChild(s.tile);wire(s,w,f);updateGate();
+  try{await s.begin(w,f);}catch(e){s.running=false;s.err=hint(e);updateGate();}
+}
+async function addUsb(dev,w,f){
+  const s={kind:'usb',dev,id:'s'+(++nId),isEye:true,label:'PS Eye #'+(++nEye)+' (USB)',frames:0,shown:0,seq:0,running:false,hasNew:false};
+  s.tile=mkTile(s.label,'<div class="mv"><canvas class="vid"></canvas><canvas class="ov"></canvas></div>',true);
+  const t=s.tile,cv=t.querySelector('canvas'),cx=cv.getContext('2d');s.el=cv;s.cx=cx;s.ov=t.querySelector('.ov');s.ovx=s.ov.getContext('2d');
+  const apply=()=>s.eye&&s.eye.setManual(t.querySelector('.man').checked,+t.querySelector('.exp').value,+t.querySelector('.gain').value).catch(e=>say(hint(e),1));
+  ['.man','.exp','.gain'].forEach(k=>t.querySelector(k).onchange=apply);
+  t.querySelector('.blink').onclick=()=>{const e=s.eye;if(e)e.lock(async()=>{for(let i=0;i<6;i++){await e.led(i%2);await sleep(150);}await e.led(1);}).catch(()=>{});};
+  s.begin=async(w,f)=>{
+    s.t0=performance.now();let eye;
+    try{eye=new Eye(dev);await eye.open();await eye.start(w,f);}catch(e){try{await dev.close();}catch(_){}throw e;}
+    s.eye=eye;s.target=eye.fps;const W=s.W=eye.w_,H=s.H=eye.h_,SZ=W*H*2;cv.width=s.ov.width=W;cv.height=s.ov.height=H;cv.style.aspectRatio=W+'/'+H;
+    s.img=cx.createImageData(W,H);s.px=new Uint8ClampedArray(s.img.data.buffer);
+    let buf=new Uint8Array(SZ),ready=new Uint8Array(SZ),len=0,lpts=0,lfid=0,bad=true;s.ready=()=>ready;
+    const scan=data=>{ // port of sd_pkt_scan, identical to ps3eye-tester
+      for(let o=0;o<data.length;o+=2048){
+        const blk=data.subarray(o,Math.min(o+2048,data.length));
+        if(blk[0]!==12||blk.length<12||(blk[1]&0x40)||!(blk[1]&0x04)){bad=true;continue;}
+        const pts=(blk[5]<<24|blk[4]<<16|blk[3]<<8|blk[2])>>>0,fid=blk[1]&1,pl=blk.subarray(12);
+        if(pts!==lpts||fid!==lfid){lpts=pts;lfid=fid;len=0;bad=false;if(pl.length<=SZ){buf.set(pl,0);len=pl.length;}}
+        else if(blk[1]&0x02){lpts=0;if(!bad&&len+pl.length===SZ){buf.set(pl,len);const x=buf;buf=ready;ready=x;s.hasNew=true;s.frames++;}bad=true;}
+        else if(!bad){if(len+pl.length<=SZ){buf.set(pl,len);len+=pl.length;}else bad=true;}
+      }};
+    s.running=true;eye.run=true;
+    s.loop=(async()=>{
+      const pull=()=>dev.transferIn(eye.ep,65536).catch(e=>({status:'error',e}));
+      const q=Array.from({length:16},pull);
+      while(eye.run){
+        const r=await q.shift();if(!eye.run)break;q.push(pull());
+        if(r.status==='ok')scan(new Uint8Array(r.data.buffer,r.data.byteOffset,r.data.byteLength));
+        else if(r.status==='stall')await dev.clearHalt('in',eye.ep).catch(()=>{});
+        else if(r.status==='error'){s.running=false;s.err='Stream stopped: '+((r.e&&r.e.message)||'device error');updateGate();break;}
+      }})();
+    updateGate();
+  };
+  s.end=async()=>{s.running=false;const e=s.eye;s.eye=null;if(e){await e.stop();await s.loop;}};
+  return boot(s,w,f);
+}
+async function addCam(d,w,f){
+  const s={kind:'cam',devId:d.deviceId,id:'s'+(++nId),isEye:looksEye(d),label:d.label||'Camera',frames:0,shown:0,seq:0,running:false};
+  s.tile=mkTile(s.label,'<div class="mv"><video class="vid" autoplay muted playsinline></video><canvas class="ov"></canvas></div>',false);
+  const v=s.tile.querySelector('video');s.el=v;s.ov=s.tile.querySelector('.ov');s.ovx=s.ov.getContext('2d');
+  const tick=()=>{if(!s.stream)return;s.frames++;s.seq++;v.requestVideoFrameCallback(tick);};
+  s.begin=async(w,f)=>{s.t0=performance.now();
+    s.stream=await navigator.mediaDevices.getUserMedia({video:{deviceId:{exact:d.deviceId},width:{ideal:w},height:{ideal:w*3/4},frameRate:{ideal:f}}});
+    v.srcObject=s.stream;await v.play();const tr=s.stream.getVideoTracks()[0],g=tr.getSettings();s.W=g.width;s.H=g.height;s.target=Math.round(g.frameRate||f);s.ov.width=s.W;s.ov.height=s.H;v.style.aspectRatio=s.W+'/'+s.H;s.running=true;
+    tr.onended=()=>{s.running=false;s.err='camera disconnected';updateGate();};v.requestVideoFrameCallback(tick);updateGate();};
+  s.end=async()=>{s.running=false;if(s.stream){s.stream.getTracks().forEach(t=>t.stop());s.stream=null;}v.srcObject=null;};
+  return boot(s,w,f);
+}
+// the tracking toggle exists only while a PS Eye is streaming AND a PS Move is connected
+function updateGate(){
+  const eye=[...srcs].some(x=>x.isEye&&x.running),move=[...cards.values()].some(c=>c.type==='move');
+  $('trkWrap').hidden=!(eye&&move);
+}
+function drawEyes(){for(const s of srcs)if(s.kind==='usb'&&s.hasNew&&s.running){s.hasNew=false;yuyv2rgba(s.ready(),s.px,s.W*s.H/2);s.cx.putImageData(s.img,0,0);s.seq++;s.shown++;}}
+async function usbList(){
+  const box=$('eyeList');box.innerHTML='';if(!navigator.usb)return;
+  let ds=[];try{ds=(await navigator.usb.getDevices()).filter(isEyeDev);}catch(e){return;}
+  ds.filter(d=>![...srcs].some(s=>s.dev===d)).forEach((d,i)=>{const b=document.createElement('button');b.textContent='Start authorised PS Eye '+(i+1);b.onclick=()=>{addUsb(d,+$('res').value,+$('fps').value);usbList();};box.appendChild(b);});
+}
+$('eyeAdd').onclick=async()=>{
+  if(!navigator.usb){say('WebUSB not available. Use Chrome or Edge, and open the file directly.',1);return;}
+  let dev;try{dev=await navigator.usb.requestDevice({filters:[{vendorId:0x1415,productId:0x2000}]});}
+  catch(e){say(e.name==='NotFoundError'?'No PS Eye chosen. If none were listed, check the cable and that no driver or app owns it.':e.message,1);return;}
+  if([...srcs].some(s=>s.dev===dev)){say('That PS Eye is already running.',1);return;}
+  addUsb(dev,+$('res').value,+$('fps').value);usbList();
+};
+$('wcRefresh').onclick=async()=>{
+  const box=$('camList');box.innerHTML='';
+  try{
+    (await navigator.mediaDevices.getUserMedia({video:true})).getTracks().forEach(t=>t.stop());
+    let ds=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');const all=ds.length;
+    if($('onlyEye').checked)ds=ds.filter(looksEye);
+    say(ds.length+' camera(s) listed'+(all>ds.length?' ('+(all-ds.length)+' hidden by the filter)':'')+'. A PS Eye only shows here if a driver is installed; on Mac use “Add PS Eye over USB”.');
+    ds.forEach(d=>{const b=document.createElement('button');b.textContent='Start '+(d.label||'camera');b.onclick=()=>{if(![...srcs].some(s=>s.devId===d.deviceId))addCam(d,+$('res').value,+$('fps').value);};box.appendChild(b);});
+  }catch(e){say('Camera access: '+hint(e),1);}
+};
+if(navigator.usb){navigator.usb.addEventListener('disconnect',e=>{for(const s of [...srcs])if(s.dev===e.device)s.stop();usbList();});navigator.usb.addEventListener('connect',usbList);}
+usbList();
+(function env(){const m=[];
+  if(!window.isSecureContext)m.push('Not a secure context: open the file directly or serve it from localhost/https.');
+  if(window.top!==window.self)m.push('This page is inside a frame/preview, where browsers block WebHID and WebUSB. Open the file directly in Chrome or Edge.');
+  if(!navigator.hid)m.push('WebHID unavailable: controllers cannot work here (use Chrome or Edge).');
+  if(!navigator.usb)m.push('WebUSB unavailable: PS Eye over USB cannot work here (use Chrome or Edge).');
+  $('env').innerHTML=m.map(x=>'<div class="er">⚠ '+x+'</div>').join('');})();
+function fail(e){const m=(e&&e.message)||String(e);console.error(e);if(!$('env').textContent.includes(m))$('env').insertAdjacentHTML('beforeend','<div class="er">⚠ '+m.replace(/</g,'&lt;')+'</div>');}
+addEventListener('error',e=>fail(e.error||e.message));addEventListener('unhandledrejection',e=>fail(e.reason));
+
+// ================= PS Move orb tracking (overlay on the Eye preview) =================
+const MAG=[190,0,190]; // slightly dimmed orb: less glow in the camera, still far brighter than any shirt
+const tOff=document.createElement('canvas');tOff.width=160;tOff.height=120;const tOx=tOff.getContext('2d',{willReadFrequently:true});
+const cOff=document.createElement('canvas');cOff.width=cOff.height=128;const cOx=cOff.getContext('2d',{willReadFrequently:true});
+let cal=null,nextCal=0;
+const grab=s=>{tOx.drawImage(s.el,0,0,160,120);return tOx.getImageData(0,0,160,120).data;};
+function setOrb(rgb){for(const c of cards.values())if(c.type==='move'){c.o.rgb=rgb.slice();if(c.col)c.col.value=rgb2hex(rgb);queue(c);}}
+// calibration (like psmoveapi): compare a frame with the orb OFF to one with it ON. Only the orb brightens, so a shirt can never be mistaken for it.
+function solveCal(A,B){
+  const W=160,H=120,GW=20,GH=15,sc=new Float32Array(W*H),cnt=new Int32Array(GW*GH);let mx=0;
+  for(let i=0,q=0;i<W*H;i++,q+=4){const d=Math.max(0,B[q]-A[q])+Math.max(0,B[q+1]-A[q+1])+Math.max(0,B[q+2]-A[q+2]);sc[i]=d;if(d>mx)mx=d;}
+  if(mx<120)return null;const th=mx*0.5;
+  for(let i=0;i<W*H;i++)if(sc[i]>=th)cnt[((i/W|0)>>3)*GW+((i%W)>>3)]++;
+  let best=-1,bi=0;
+  for(let cy=0;cy<GH;cy++)for(let cx=0;cx<GW;cx++){let t=0;for(let y=-1;y<=1;y++)for(let x=-1;x<=1;x++){const yy=cy+y,xx=cx+x;if(yy>=0&&yy<GH&&xx>=0&&xx<GW)t+=cnt[yy*GW+xx];}if(t>best){best=t;bi=cy*GW+cx;}}
+  const cy0=(bi/GW|0)*8+4,cx0=(bi%GW)*8+4;let n=0,sx=0,sy=0,R=0,G=0,Bl=0,m=0;
+  for(let i=0,q=0;i<W*H;i++,q+=4){if(sc[i]<th)continue;const x=i%W,y=i/W|0;if(Math.abs(x-cx0)>24||Math.abs(y-cy0)>24)continue;
+    n++;sx+=x;sy+=y;if(sc[i]>=mx*0.7){R+=B[q];G+=B[q+1];Bl+=B[q+2];m++;}}
+  if(n<3||!m)return null;
+  let[h,sa,v]=rgb2h(R/m,G/m,Bl/m);if(sa<0.15)h=rgb2h(...MAG)[0];
+  return{x:sx/n/W,y:sy/n/H,r:Math.sqrt(n/Math.PI)/W,hue:h,sat:Math.max(0.2,sa),val:v,miss:0,age:0};
+}
+// local tracking: look only near the last position, match the learned colour, keep just the bright core (not the glow), reject wrong-sized blobs
+function lockStep(s){
+  const L=s.lock,W=s.W,H=s.H,hw=Math.min(0.5,Math.max(0.09,L.r*4)*(1+L.miss*0.4)),cs=Math.max(48,Math.min(H,Math.round(2*hw*W)));
+  const x0=Math.max(0,Math.min(W-cs,Math.round(L.x*W-cs/2))),y0=Math.max(0,Math.min(H-cs,Math.round(L.y*H-cs/2))),k=cs/128;
+  cOx.drawImage(s.el,x0,y0,cs,cs,0,0,128,128);const d=cOx.getImageData(0,0,128,128).data;
+  const mv=Math.max(0.4,L.val*0.55),ms=Math.max(0.2,L.sat*0.5),xs=[],ys=[],vs=[];let pk=0;
+  for(let i=0,q=0;i<16384;i++,q+=4){const r=d[q],g=d[q+1],b=d[q+2],mx=Math.max(r,g,b),df=mx-Math.min(r,g,b),v=mx/255;
+    if(v<mv||df<mx*ms)continue;
+    let h=mx===r?((g-b)/df+6)%6:mx===g?(b-r)/df+2:(r-g)/df+4;h/=6;const dd=Math.abs(h-L.hue);if(Math.min(dd,1-dd)>0.07)continue;
+    xs.push(i&127);ys.push(i>>7);vs.push(v);if(v>pk)pk=v;}
+  let ok=false;
+  const cx=[],cy=[],w=[];for(let j=0;j<xs.length;j++)if(vs[j]>=pk*0.75){cx.push(xs[j]);cy.push(ys[j]);w.push(vs[j]*vs[j]);}
+  if(cx.length>=3){
+    let sw=0,mx=0,my=0;for(let j=0;j<cx.length;j++){sw+=w[j];mx+=cx[j]*w[j];my+=cy[j]*w[j];}mx/=sw;my/=sw;
+    const a=[...cx].sort((p,q)=>p-q),b=[...cy].sort((p,q)=>p-q),n=a.length,lo=Math.floor(n*.01),hi=Math.min(n-1,Math.floor(n*.99)),rr=((a[hi]-a[lo])+(b[hi]-b[lo])+2)/4*k/W;
+    if(L.age<5||(rr>L.r*0.5&&rr<L.r*2)){
+      const nx=(x0+(mx+0.5)*k)/W,ny=(y0+(my+0.5)*k)/H;
+      L.x+=(nx-L.x)*0.8;L.y+=(ny-L.y)*0.8;L.r=L.age<5?rr:L.r+(rr-L.r)*0.3;L.miss=0;L.age++;ok=true;}
+  }
+  if(!ok&&++L.miss>14){s.lock=null;s.orb=null;drawOrb(s,null);nextCal=performance.now()+1500;return;}
+  s.orb=L.miss<=3?{x:L.x,y:L.y,r:L.r}:null;drawOrb(s,s.orb);
+}
+function drawOrb(s,o){ // the overlay shares the preview's mirror, so image coordinates are enough; text is flipped back so it reads normally
+  const W=s.ov.width,H=s.ov.height,g=s.ovx;g.clearRect(0,0,W,H);s.dist=null;if(!o)return;
+  const X=o.x*W,Y=o.y*H,R=Math.max(o.r*W*1.2,4),f=(W/2)/Math.tan(75*Math.PI/360);
+  s.dist=4.5*f/(2*o.r*W); // orb is ~4.5 cm across; assumes the Eye's wide (75°) lens setting
+  g.strokeStyle='#3ecf8e';g.lineWidth=Math.max(2,W/200);g.beginPath();g.arc(X,Y,R,0,7);g.moveTo(X-R-8,Y);g.lineTo(X+R+8,Y);g.moveTo(X,Y-R-8);g.lineTo(X,Y+R+8);g.stroke();
+  const t='≈ '+(s.dist>=100?(s.dist/100).toFixed(2)+' m':Math.round(s.dist)+' cm'),fs=Math.round(W/28),ty=Y-R-12<fs?Y+R+fs+6:Y-R-12;
+  g.save();g.translate(X,ty);if(!s.tile.querySelector('.mv').classList.contains('off'))g.scale(-1,1);
+  g.font='bold '+fs+'px system-ui,sans-serif';g.textAlign='center';g.lineWidth=3;g.strokeStyle='#000';g.fillStyle='#3ecf8e';g.strokeText(t,0,0);g.fillText(t,0,0);g.restore();
+}
+function trackAll(){
+  const on=$('trk').checked&&!$('trkWrap').hidden,eyes=[...srcs].filter(x=>x.ov&&x.isEye&&x.running&&x.W),now=performance.now();
+  for(const x of srcs)x.tracking=on&&eyes.includes(x);
+  if(!on||!eyes.length){cal=null;for(const x of srcs)if(x.ov&&(x.lock||x.orb)){x.lock=x.orb=null;drawOrb(x,null);}return;}
+  if(!cal&&now>=nextCal&&eyes.some(x=>!x.lock)){cal={t:now,ph:0};setOrb([0,0,0]);}
+  else if(cal&&cal.ph===0&&now-cal.t>450){eyes.forEach(x=>x.calA=grab(x));setOrb(MAG);cal={t:now,ph:1};}
+  else if(cal&&cal.ph===1&&now-cal.t>450){let fail=0;for(const x of eyes)if(!x.lock){x.lock=solveCal(x.calA,grab(x));if(!x.lock)fail++;x.calA=null;}cal=null;nextCal=now+(fail?2500:0);}
+  for(const x of eyes){if(!x.lock||cal){if(x.orb){x.orb=null;drawOrb(x,null);}continue;}if(x.seq===x.tseq)continue;x.tseq=x.seq;lockStep(x);}
+}
+function camFrame(){drawEyes();trackAll();}
+$('trk').onchange=()=>{if($('trk').checked){setOrb(MAG);nextCal=0;for(const x of srcs)x.lock=null;}};
+
+// ================= connect controllers =================
+$('add').onclick=async()=>{
+  if(!navigator.hid){$('status').innerHTML='<span class="er">WebHID not available. Use Chrome or Edge.</span>';return;}
+  try{const ds=await navigator.hid.requestDevice({filters:Object.keys(MODELS).map(p=>({vendorId:SONY,productId:+p}))});for(const d of ds)await add(d);}
+  catch(e){$('status').innerHTML='<span class="er">'+(e.name==='NotFoundError'?'No controller chosen (none listed? check the cable, and that Steam/DS4Windows are closed).':e.message)+'</span>';}
+};
+if(navigator.hid){
+  navigator.hid.getDevices().then(ds=>ds.forEach(add));
+  navigator.hid.addEventListener('disconnect',e=>{const c=cards.get(e.device);if(c)drop(c,false);});
+  navigator.hid.addEventListener('connect',e=>add(e.device));
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
